@@ -1,4 +1,4 @@
-# Comparison Point 4: Skills & Extensibility
+# Comparison Point 4: Skills & Extensibility (done)
 
 | Feature | GoClaw (Fork) | Hermes Agent |
 | :--- | :--- | :--- |
@@ -25,4 +25,8 @@ Hermes supports multiple "Terminal Backends." You can tell Hermes to run its cod
 2.  **Docker:** An isolated container.
 3.  **Modal:** Serverless cloud infrastructure.
 4.  **Daytona:** Remote development environments.
-This gives you extreme flexibility for where your "Life Manager" actually performs its work.
+
+**v0.7.0 Update:** 
+- **Enhanced Security:** Sandbox output is now redacted for secrets.
+- **Skill Reliability:** v0.7.0 adds fuzzy matching for skill patches and size limits to prevent oversized writes, making the self-improving loop more robust.
+- **Stealth Research (Camofox):** v0.7.0 introduces the **Camofox anti-detection browser**. For your "Life Manager" goals (e.g., career research, legacy tracking), this allows the agent to navigate the web without being blocked by anti-bot measures.

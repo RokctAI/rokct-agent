@@ -372,6 +372,7 @@ DEFAULT_CONFIG = {
         "skin": "default",
         "tool_progress_command": False,  # Enable /verbose command in messaging gateway
         "tool_preview_length": 0,  # Max chars for tool call previews (0 = no limit, show full paths/commands)
+        "agent_name": "Rok",      # Default agent name (e.g. for branding and reply headers)
     },
 
     # Privacy settings

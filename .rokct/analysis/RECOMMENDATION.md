@@ -1,4 +1,4 @@
-# Recommendation: Future Architecture for Life/Career Manager
+# Recommendation: Future Architecture for Life/Career Manager (done)
 
 Based on your goals for a "Life Manager" (Career, Legacy, Achievement tracking) and your Frappe/Python background, here is the recommended path forward.
 
@@ -15,9 +15,9 @@ Based on your goals for a "Life Manager" (Career, Legacy, Achievement tracking) 
 You don't have to lose the work you did in GoClaw. Here is how to port them to Hermes:
 
 ### A. Frappe Site Ingestion
-In Hermes, you can create a `tools/frappe_tool.py` that replicates your Go logic.
+In Hermes, you can create a `tools/frappe_tool.py` that replicates your Go logic. [DONE]
 -   **Go version:** `IngestSiteConfig()` in `site_config.go`.
--   **Hermes version:** A Python tool that reads `site_config.json` and uses the `frappe` Python library directly to interact with your database. This will be *much* cleaner in Python.
+-   **Hermes version:** Integrated role detection in `hermes_constants.py` and API bridging in `gateway/frappe_integration.py`.
 
 ### B. The Intent Router
 Hermes currently exposes all tools to the agent. To port your "Intent Router":
@@ -25,9 +25,9 @@ Hermes currently exposes all tools to the agent. To port your "Intent Router":
 -   Instead of Go heuristics, you can use Hermes's **Skills system**. For example, a "/debug" slash command that pre-loads specific debugging skills and restricts the toolset for that turn.
 
 ### C. Architectural Mapper
-Your GoClaw mapper understands Frappe project structures.
--   Port this as a Hermes **Skill**. Create a `skills/software-development/frappe-expert/SKILL.md` that contains the rules for how a Frappe app is structured.
--   The "Mapper" tool itself can be ported to Python using `os.walk` (similar to your Go code) and exposed as a Hermes tool.
+Your GoClaw mapper understands Frappe project structures. [DONE]
+-   Port this as a Hermes **Skill**.
+-   The "Mapper" tool has been ported to `tools/rokct_mapper.py` and exposed as a Hermes tool.
 
 ### D. WhatsApp Bridge
 Hermes already has a WhatsApp bridge in `gateway/platforms/whatsapp.py`.
@@ -40,14 +40,14 @@ This is the only area where GoClaw is stronger. Hermes assumes one "Profile" = o
 **The Solution for your Tenants:**
 To offer this as a service to others:
 1.  **Containerized Instances:** Run one Hermes Docker container per tenant. This is the "Hermes way" for isolation.
-2.  **Custom Memory Provider:** Hermes supports pluggable memory. You could write a `PostgresMemoryProvider` for Hermes that saves data to your Frappe PostgreSQL DB, using `tenant_id` for isolation (mirroring your GoClaw `pg` logic).
+2.  **Custom Memory Provider:** Hermes v0.7.0 supports pluggable memory. You should write a **`FrappeMemoryProvider`** for Hermes that saves data to your `rPanel` PostgreSQL DB using `pgvector`, using `tenant_id` for isolation (mirroring your GoClaw `pg` logic). This maximizes the "one external provider" slot available in v0.7.0.
 
 ## 4. The "Dynamic Agent" Advantage
 
 By using your `rcore` platform's **Bake** logic, you are building what I call a **Zero-Maintenance Agent**.
 
 -   **GoClaw:** To add a new tool, you often have to touch Go code, define a struct, and rebuild.
--   **Hermes + Dynamic Frappe:** To add a new tool, you write a Python function in Frappe and run `bake`. The Agent instantly "knows" how to use it because it reads the updated `ai_tools.json` schema.
+-   **Hermes + Dynamic Frappe:** To add a new tool, you write a Python function in Frappe and run `bake`. The Agent instantly "knows" how to use it. With v0.7.0, you get **Inline Diff Previews** to verify these dynamic changes before they are applied.
 
 This makes you a **Next Level Builder** because you aren't just building an agent; you're building a **platform** where the agent's intelligence grows automatically as your backend grows.
 

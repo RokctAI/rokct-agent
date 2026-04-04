@@ -363,6 +363,9 @@ class SessionEntry:
     was_auto_reset: bool = False
     auto_reset_reason: Optional[str] = None  # "idle" or "daily"
     reset_had_activity: bool = False  # whether the expired session had any messages
+
+    # Timestamp of the last pre-reset warning sent to the user
+    last_warning_at: Optional[datetime] = None
     
     # Set by the background expiry watcher after it successfully flushes
     # memories for this session.  Persisted to sessions.json so the flag
@@ -388,6 +391,7 @@ class SessionEntry:
             "estimated_cost_usd": self.estimated_cost_usd,
             "cost_status": self.cost_status,
             "memory_flushed": self.memory_flushed,
+            "last_warning_at": self.last_warning_at.isoformat() if self.last_warning_at else None,
         }
         if self.origin:
             result["origin"] = self.origin.to_dict()
@@ -424,6 +428,7 @@ class SessionEntry:
             estimated_cost_usd=data.get("estimated_cost_usd", 0.0),
             cost_status=data.get("cost_status", "unknown"),
             memory_flushed=data.get("memory_flushed", False),
+            last_warning_at=datetime.fromisoformat(data["last_warning_at"]) if data.get("last_warning_at") else None,
         )
 
 

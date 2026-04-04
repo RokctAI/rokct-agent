@@ -1,4 +1,4 @@
-# Comparison Point 5: Messaging Channels & WhatsApp
+# Comparison Point 5: Messaging Channels & WhatsApp (done)
 
 | Feature | GoClaw (Fork) | Hermes Agent |
 | :--- | :--- | :--- |
@@ -19,3 +19,7 @@ When you run `hermes gateway setup`, Hermes offers to configure WhatsApp for you
 Hermes's native support for voice is its strongest differentiator for a mobile-first "Life Manager."
 - **Inbound:** When you send a voice note via WhatsApp, Hermes uses Whisper (local or via Groq) to transcribe it before the agent even "thinks."
 - **Outbound:** The agent can respond with audio files using providers like ElevenLabs or OpenAI, allowing for a completely hands-free conversation.
+
+**v0.7.0 Update:**
+- **Gateway Hardening:** v0.7.0 provides major stability fixes for photo media delivery and race conditions in the gateway.
+- **Approval Routing:** Improved routing for `/approve` and `/deny` commands ensure tool results are no longer lost when the agent is blocked waiting for user confirmation on WhatsApp.

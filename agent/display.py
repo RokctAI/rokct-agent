@@ -506,6 +506,70 @@ def _summarize_rendered_diff_sections(
     return rendered
 
 
+def build_diff_summary(diff_text: str, platform: str = None) -> str:
+    """Build a compact summary of changes (e.g. M | file.py +10 | -5)."""
+    if not diff_text:
+        return ""
+
+    summaries = []
+    current_file = None
+    current_status = "M"
+    current_added = 0
+    current_removed = 0
+    file_count = 0
+
+    lines = diff_text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("--- "):
+            status = "A" if line.startswith("--- /dev/null") else "M"
+            if i + 1 < len(lines) and lines[i+1].startswith("+++ "):
+                i += 1
+                plus_line = lines[i]
+                if plus_line.startswith("+++ /dev/null"):
+                    status = "D"
+                    path_part = line[4:].strip()
+                else:
+                    path_part = plus_line[4:].strip()
+                
+                if current_file:
+                    summaries.append((current_status, current_file, current_added, current_removed))
+                
+                current_file = path_part[2:] if path_part.startswith(("a/", "b/")) else path_part
+                if "/" in current_file:
+                    current_file = current_file.split("/")[-1]
+                current_status = status
+                current_added = 0
+                current_removed = 0
+                file_count += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            current_added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            current_removed += 1
+        i += 1
+
+    if current_file:
+        summaries.append((current_status, current_file, current_added, current_removed))
+
+    if not summaries:
+        return ""
+
+    formatted = []
+    for s, f, a, r in summaries:
+        line_text = f"{s} | {f} +{a} | -{r}"
+        if platform in ("whatsapp", "discord", "telegram"):
+            formatted.append(f"`{line_text}`")
+        else:
+            formatted.append(line_text)
+
+    if platform == "whatsapp":
+        header = f"📝 *{file_count} file{'s' if file_count > 1 else ''} changed:*"
+        return header + "\n" + "\n".join(formatted)
+    
+    return "\n".join(formatted)
+
+
 def render_edit_diff_with_delta(
     tool_name: str,
     result: str | None,
@@ -513,6 +577,8 @@ def render_edit_diff_with_delta(
     function_args: dict | None = None,
     snapshot: LocalEditSnapshot | None = None,
     print_fn=None,
+    compact: bool = False,
+    platform: str = None,
 ) -> bool:
     """Render an edit diff inline without taking over the terminal UI."""
     diff = extract_edit_diff(
@@ -523,6 +589,13 @@ def render_edit_diff_with_delta(
     )
     if not diff:
         return False
+    
+    if compact:
+        summary = build_diff_summary(diff, platform=platform)
+        if not summary:
+            return False
+        return _emit_inline_diff(summary, print_fn)
+
     try:
         rendered_lines = _summarize_rendered_diff_sections(diff)
     except Exception as exc:

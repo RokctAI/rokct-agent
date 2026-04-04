@@ -96,6 +96,8 @@ from agent.display import (
     get_cute_tool_message as _get_cute_tool_message_impl,
     _detect_tool_failure,
     get_tool_emoji as _get_tool_emoji,
+    capture_local_edit_snapshot,
+    render_edit_diff_with_delta,
 )
 from agent.trajectory import (
     convert_scratchpad_to_think, has_incomplete_scratchpad,
@@ -581,6 +583,7 @@ class AIAgent:
         self.tool_progress_callback = tool_progress_callback
         self.tool_start_callback = tool_start_callback
         self.tool_complete_callback = tool_complete_callback
+        self._pending_edit_snapshots = {}  # key: tool_call_id, value: snapshot
         self.thinking_callback = thinking_callback
         self.reasoning_callback = reasoning_callback
         self._reasoning_deltas_fired = False  # Set by _fire_reasoning_delta, reset per API call
@@ -885,6 +888,25 @@ class AIAgent:
             else:
                 print(f"🔄 Fallback chain ({len(self._fallback_chain)} providers): " +
                       " → ".join(f"{f['model']} ({f['provider']})" for f in self._fallback_chain))
+
+        # Detect ROKCT platform role for auto-configuration
+        from hermes_constants import get_rokct_app_role
+        self.rokct_app_role = get_rokct_app_role()
+        if self.rokct_app_role != "unknown" and not self.quiet_mode:
+            print(f"🚜 ROKCT Platform Role detected: {self.rokct_app_role}")
+
+        # Auto-configure toolsets based on role
+        if self.rokct_app_role == "tenant":
+            # Hard-disable coding engine for tenants to prevent site breakage
+            if disabled_toolsets is None:
+                disabled_toolsets = []
+            if "rokct-coding" not in disabled_toolsets:
+                disabled_toolsets.append("rokct-coding")
+        elif self.rokct_app_role == "control":
+            # Enable coding engine for control site
+            if enabled_toolsets is not None:
+                if "rokct-coding" not in enabled_toolsets:
+                    enabled_toolsets.append("rokct-coding")
 
         # Get available tools with filtering
         self.tools = get_tool_definitions(
@@ -2431,14 +2453,16 @@ class AIAgent:
 
         if not _soul_loaded:
             # Fallback to hardcoded identity
-            _ai_peer_name = (
-                None
-                if False
-                else None
-            )
-            if _ai_peer_name:
+            try:
+                from hermes_cli.config import load_config as _lc
+                _cfg = _lc()
+                _ai_peer_name = _cfg.get("display", {}).get("agent_name", "Rok")
+            except Exception:
+                _ai_peer_name = "Rok"
+
+            if _ai_peer_name != "Rok":
                 _identity = DEFAULT_AGENT_IDENTITY.replace(
-                    "You are Hermes Agent",
+                    "You are Rok",
                     f"You are {_ai_peer_name}",
                     1,
                 )
@@ -4930,6 +4954,19 @@ class AIAgent:
 
     def _build_api_kwargs(self, api_messages: list) -> dict:
         """Build the keyword arguments dict for the active API mode."""
+        # Refresh dynamic tools from registry for the current valid_tool_names
+        if self.valid_tool_names:
+            from tools.registry import registry
+            _registry_tools = registry.get_definitions(self.valid_tool_names, quiet=True)
+            if _registry_tools:
+                # Merge: prefer registry definitions for matched names
+                _seen = {t["function"]["name"] for t in (self.tools or [])}
+                for _rt in _registry_tools:
+                    if _rt["function"]["name"] not in _seen:
+                        if self.tools is None: self.tools = []
+                        self.tools.append(_rt)
+                        _seen.add(_rt["function"]["name"])
+
         if self.api_mode == "anthropic_messages":
             from agent.anthropic_adapter import build_anthropic_kwargs
             anthropic_messages = self._prepare_anthropic_messages_for_api(api_messages)
@@ -5940,6 +5977,14 @@ class AIAgent:
                 except Exception as cb_err:
                     logging.debug(f"Tool start callback error: {cb_err}")
 
+            # Capture local before-state for write-capable tools (for inline diffs)
+            try:
+                snapshot = capture_local_edit_snapshot(function_name, function_args)
+                if snapshot is not None:
+                    self._pending_edit_snapshots[tool_call.id] = snapshot
+            except Exception:
+                pass
+
             # Checkpoint: snapshot working dir before file-mutating tools
             if function_name in ("write_file", "patch") and self._checkpoint_mgr.enabled:
                 try:
@@ -6126,6 +6171,30 @@ class AIAgent:
                     self.tool_complete_callback(tool_call.id, function_name, function_args, function_result)
                 except Exception as cb_err:
                     logging.debug(f"Tool complete callback error: {cb_err}")
+
+            # Render file edits with inline diff for messaging platforms
+            snapshot = self._pending_edit_snapshots.pop(tool_call.id, None)
+            is_messaging = self.platform not in (None, "cli")
+            if is_messaging and function_name in ("write_file", "patch", "skill_manage"):
+                try:
+                    # Bridge to the status_callback/adapter.send path in gateway
+                    def _bridge_print(text):
+                        if self.status_callback:
+                            self.status_callback("lifecycle", text)
+                        elif not self.quiet_mode:
+                            self._safe_print(text)
+
+                    render_edit_diff_with_delta(
+                        function_name,
+                        function_result,
+                        function_args=function_args,
+                        snapshot=snapshot,
+                        print_fn=_bridge_print,
+                        compact=True,
+                        platform=self.platform,
+                    )
+                except Exception:
+                    pass
 
             # Guard against tools returning absurdly large content that would
             # blow up the context window. 100K chars ≈ 25K tokens — generous
@@ -6469,6 +6538,32 @@ class AIAgent:
         self._mute_post_response = False
         self._surrogate_sanitized = False
 
+        # Initialize tool loop detector
+        from agent.loop_detector import LoopDetector
+        self._loop_detector = LoopDetector()
+
+        # Entity-based dynamic tool loading (Frappe)
+        if self.platform and self.platform.startswith("hermes-"):
+            try:
+                from tools.frappe_dynamic import frappe_dynamic
+                import asyncio as _aio
+                # Check for running loop (gateway mode) vs sync (CLI)
+                try:
+                    loop = _aio.get_running_loop()
+                    _new_remote_tools = _aio.run_coroutine_threadsafe(
+                        frappe_dynamic.get_tools_for_message(user_message),
+                        loop
+                    ).result(timeout=10)
+                except RuntimeError:
+                    _new_remote_tools = _aio.run(frappe_dynamic.get_tools_for_message(user_message))
+                
+                if _new_remote_tools:
+                    # Update local valid tool names
+                    for _nt in _new_remote_tools:
+                        self.valid_tool_names.add(_nt)
+            except Exception as _fde:
+                logging.debug(f"Frappe dynamic tool loading failed: {_fde}")
+
         # Pre-turn connection health check: detect and clean up dead TCP
         # connections left over from provider outages or dropped streams.
         # This prevents the next API call from hanging on a zombie socket.
@@ -6742,6 +6837,29 @@ class AIAgent:
                     self.step_callback(api_call_count, prev_tools)
                 except Exception as _step_err:
                     logger.debug("step_callback error (iteration %s): %s", api_call_count, _step_err)
+
+            # Check for tool loops
+            if api_call_count > 1:
+                # Get the last tool call info from messages
+                last_asst = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+                if last_asst and last_asst.get("tool_calls"):
+                    _break_loop = False
+                    for tc in last_asst["tool_calls"]:
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                            level, msg = self._loop_detector.detect(tc["function"]["name"], self._loop_detector.hash_args(tc["function"]["name"], args))
+                            if level == "critical":
+                                self._vprint(f"\n{self.log_prefix}🛑 {msg}", force=True)
+                                _break_loop = True
+                                break
+                            if level == "warning":
+                                self._vprint(f"\n{self.log_prefix}⚠️  {msg}", force=True)
+                                # Inject warning into next prompt
+                                messages.append({"role": "user", "content": msg})
+                        except Exception:
+                            pass
+                    if _break_loop:
+                        break
 
             # Track tool-calling iterations for skill nudge.
             # Counter resets whenever skill_manage is actually used.
@@ -8241,6 +8359,18 @@ class AIAgent:
                             pass
 
                     self._execute_tool_calls(assistant_message, messages, effective_task_id, api_call_count)
+
+                    # Update loop detector with results
+                    for tc in assistant_message.tool_calls:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                            args_hash = self._loop_detector.record_call(tc.function.name, args)
+                            # Find the corresponding tool result
+                            res_msg = next((m for m in reversed(messages) if m.get("role") == "tool" and m.get("tool_call_id") == tc.id), None)
+                            if res_msg:
+                                self._loop_detector.record_result(args_hash, res_msg.get("content", ""))
+                        except Exception:
+                            pass
 
                     # Signal that a paragraph break is needed before the next
                     # streamed text.  We don't emit it immediately because

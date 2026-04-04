@@ -103,3 +103,37 @@ AI_GATEWAY_CHAT_URL = f"{AI_GATEWAY_BASE_URL}/chat/completions"
 
 NOUS_API_BASE_URL = "https://inference-api.nousresearch.com/v1"
 NOUS_API_CHAT_URL = f"{NOUS_API_BASE_URL}/chat/completions"
+
+
+def get_rokct_app_role() -> str:
+    """Detect the ROKCT platform role from local site_config.json.
+
+    Returns "control", "tenant", or "unknown".
+    """
+    import json
+    # 1. Resolve bench path
+    bench_path = os.getenv("FRAPPE_BENCH")
+    if not bench_path:
+        # Default to common frappe-bench location
+        bench_path = "/home/frappe/frappe-bench"
+
+    # 2. Resolve site name
+    site_name = os.getenv("SITE")
+    if not site_name:
+        current_site_file = Path(bench_path) / "sites" / "currentsite.txt"
+        if current_site_file.exists():
+            site_name = current_site_file.read_text(encoding="utf-8").strip()
+
+    if not site_name:
+        return "unknown"
+
+    config_path = Path(bench_path) / "sites" / site_name / "site_config.json"
+    if not config_path.exists():
+        return "unknown"
+
+    try:
+        with open(config_path, "r") as f:
+            cfg = json.load(f)
+            return cfg.get("app_role", "tenant")  # Default to tenant for safety
+    except Exception:
+        return "unknown"

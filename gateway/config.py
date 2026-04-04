@@ -250,6 +250,10 @@ class GatewayConfig:
     # Unauthorized DM policy
     unauthorized_dm_behavior: str = "pair"  # "pair" or "ignore"
 
+    # Wake phrase for messaging platforms (e.g. "hey rok")
+    # When set, messages not starting with this phrase are handled by ambient capture.
+    wake_phrase: Optional[str] = None
+
     # Streaming configuration
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
 
@@ -334,6 +338,7 @@ class GatewayConfig:
             "stt_enabled": self.stt_enabled,
             "group_sessions_per_user": self.group_sessions_per_user,
             "unauthorized_dm_behavior": self.unauthorized_dm_behavior,
+            "wake_phrase": self.wake_phrase,
             "streaming": self.streaming.to_dict(),
         }
     
@@ -393,6 +398,7 @@ class GatewayConfig:
             stt_enabled=_coerce_bool(stt_enabled, True),
             group_sessions_per_user=_coerce_bool(group_sessions_per_user, True),
             unauthorized_dm_behavior=unauthorized_dm_behavior,
+            wake_phrase=data.get("wake_phrase"),
             streaming=StreamingConfig.from_dict(data.get("streaming", {})),
         )
 
@@ -482,6 +488,9 @@ def load_gateway_config() -> GatewayConfig:
                     yaml_cfg.get("unauthorized_dm_behavior"),
                     "pair",
                 )
+            
+            if "wake_phrase" in yaml_cfg:
+                gw_data["wake_phrase"] = yaml_cfg["wake_phrase"]
 
             # Merge platforms section from config.yaml into gw_data so that
             # nested keys like platforms.webhook.extra.routes are loaded.

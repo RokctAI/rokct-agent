@@ -1,4 +1,4 @@
-# Comparison Point 1: Core Architecture & Language
+# Comparison Point 1: Core Architecture & Language (done)
 
 | Feature | GoClaw (Fork) | Hermes Agent |
 | :--- | :--- | :--- |
@@ -13,7 +13,13 @@
 #### GoClaw: The Infrastructure Powerhouse
 GoClaw is built for scale. Its use of Go allows it to handle thousands of concurrent agent sessions on a single $5 VPS. The static binary deployment means you don't have to worry about Python dependency conflicts on the host machine. 
 
-#### Hermes Agent: The Prototyping Engine
-Hermes is optimized for "Cognitive Agility." Because it is written in Python, it integrates natively with `pytorch`, `transformers`, and the entire AI ecosystem. Adding a complex new tool in Hermes is often a 10-line Python script, whereas GoClaw requires more ceremony (defining protocols, handling types, etc.).
+#### Hermes Agent: The Intelligence Platform
+Hermes is optimized for "Cognitive Agility." Because it is written in Python, it integrates natively with `pytorch`, `transformers`, and the entire AI ecosystem.
 
-For your **Frappe** background, Hermes is the natural choice. You can import your Frappe logic directly into Hermes's tool handlers without a Go-to-Python bridge.
+**v0.7.0 Hardening:**
+While Python is traditionally seen as less "production-ready" than Go, v0.7.0 (the Resilience Release) narrows this gap significantly:
+- **Gateway Resilience:** Major stability pass across race conditions, flood control, and connection death spirals.
+- **Credential Reliability:** Native **Same-Provider Credential Pools** ensure the agent never "dies" due to a single 401/429 error.
+- **API Server Continuity:** Support for `X-Hermes-Session-Id` allows for persistent, stateful interaction across multiple clients.
+
+For your **Frappe** background, Hermes v0.7.0 is now a robust "Intelligence Layer" that matches GoClaw's reliability while keeping Python's agility.

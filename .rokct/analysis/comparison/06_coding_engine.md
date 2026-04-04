@@ -1,4 +1,4 @@
-# Comparison Point 6: Coding Engine Capabilities
+# Comparison Point 6: Coding Engine Capabilities (done)
 
 | Feature | GoClaw (Fork) | Hermes Agent |
 | :--- | :--- | :--- |
@@ -19,4 +19,8 @@ Your custom GoClaw fork is actually **ahead of Hermes** in specific coding intel
 Hermes relies on its high-level reasoning and extensive "Developer Skills" (`test-driven-development`, `systematic-debugging`) to solve coding tasks. It doesn't have a hardcoded "Intent Router"; instead, it trusts the agent to select the right skill.
 
 #### Recommendation
-When porting to Hermes, you should **bring these features with you**. You can reimplement your "Intent Router" and "Architectural Mapper" as Hermes Tools/Skills. This would combine GoClaw's deep project understanding with Hermes's superior learning loop.
+When porting to Hermes, you should **bring these features with you**. You can reimplement your "Intent Router" and "Architectural Mapper" as Hermes Tools/Skills.
+
+**v0.7.0 Opportunities:**
+- **ACP Integration:** With v0.7.0, you can register your Architectural Mapper as an **MCP server** provided by your editor (VS Code/Zed). Hermes will pick it up automatically as a toolset.
+- **Verification:** Use **Inline Diff Previews** to verify the structural edits proposed by your mapper before they are applied to the Frappe codebase.

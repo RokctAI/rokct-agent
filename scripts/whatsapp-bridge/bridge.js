@@ -49,10 +49,41 @@ const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cac
 const PAIR_ONLY = args.includes('--pair-only');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
-const DEFAULT_REPLY_PREFIX = '⚕ *Hermes Agent*\n────────────\n';
+const DEFAULT_REPLY_PREFIX = '⚕ *Rok*\n────────────\n';
 const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
   ? DEFAULT_REPLY_PREFIX
   : process.env.WHATSAPP_REPLY_PREFIX.replace(/\\n/g, '\n');
+
+function formatCard(card) {
+  const { title, rows, footer } = card;
+  const width = 34; // standard whatsapp width for monospace
+  const borderTop = '╔' + '═'.repeat(width - 2) + '╗';
+  const borderBottom = '╚' + '═'.repeat(width - 2) + '╝';
+  const separator = '╟' + '─'.repeat(width - 2) + '╢';
+
+  function padLine(text) {
+    let clean = String(text || '');
+    if (clean.length > width - 4) {
+      clean = clean.substring(0, width - 7) + '...';
+    }
+    const padding = ' '.repeat(width - 4 - clean.length);
+    return `║ ${clean}${padding} ║`;
+  }
+
+  const lines = [borderTop, padLine(title), separator];
+  
+  for (const row of rows || []) {
+    lines.push(padLine(row));
+  }
+
+  if (footer) {
+    lines.push(separator);
+    lines.push(padLine(footer));
+  }
+
+  lines.push(borderBottom);
+  return '```\n' + lines.join('\n') + '\n```';
+}
 
 function formatOutgoingMessage(message) {
   // In bot mode, messages come from a different number so the prefix is
@@ -119,6 +150,7 @@ const MAX_RECENT_IDS = 50;
 
 let sock = null;
 let connectionState = 'disconnected';
+const typingIntervals = new Map();
 
 async function startSocket() {
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -376,13 +408,21 @@ app.post('/send', async (req, res) => {
     return res.status(503).json({ error: 'Not connected to WhatsApp' });
   }
 
-  const { chatId, message, replyTo } = req.body;
-  if (!chatId || !message) {
-    return res.status(400).json({ error: 'chatId and message are required' });
+  const { chatId, message, card, replyTo } = req.body;
+  if (!chatId || (!message && !card)) {
+    return res.status(400).json({ error: 'chatId and either message or card are required' });
   }
 
   try {
-    const sent = await sock.sendMessage(chatId, { text: formatOutgoingMessage(message) });
+    const content = card ? formatCard(card) : formatOutgoingMessage(message);
+    const sent = await sock.sendMessage(chatId, { text: content });
+
+    // Stop typing interval when a message is sent
+    const interval = typingIntervals.get(chatId);
+    if (interval) {
+      clearInterval(interval);
+      typingIntervals.delete(chatId);
+    }
 
     // Track sent message ID to prevent echo-back loops
     if (sent?.key?.id) {
@@ -443,12 +483,16 @@ app.post('/send-media', async (req, res) => {
     return res.status(503).json({ error: 'Not connected to WhatsApp' });
   }
 
-  const { chatId, filePath, mediaType, caption, fileName } = req.body;
+  const { chatId, filePath, mediaType, caption, fileName, card } = req.body;
   if (!chatId || !filePath) {
     return res.status(400).json({ error: 'chatId and filePath are required' });
   }
 
   try {
+    if (card) {
+      await sock.sendMessage(chatId, { text: formatCard(card) });
+    }
+
     if (!existsSync(filePath)) {
       return res.status(404).json({ error: `File not found: ${filePath}` });
     }
@@ -483,6 +527,13 @@ app.post('/send-media', async (req, res) => {
 
     const sent = await sock.sendMessage(chatId, msgPayload);
 
+    // Stop typing interval when media is sent
+    const interval = typingIntervals.get(chatId);
+    if (interval) {
+      clearInterval(interval);
+      typingIntervals.delete(chatId);
+    }
+
     // Track sent message ID to prevent echo-back loops
     if (sent?.key?.id) {
       recentlySentIds.add(sent.key.id);
@@ -507,11 +558,42 @@ app.post('/typing', async (req, res) => {
   if (!chatId) return res.status(400).json({ error: 'chatId required' });
 
   try {
+    // If already typing for this chat, don't start another interval
+    if (typingIntervals.has(chatId)) {
+      return res.json({ success: true, message: 'Already typing' });
+    }
+
+    // Send immediately
     await sock.sendPresenceUpdate('composing', chatId);
+
+    // Start persistent interval (every 5s)
+    const interval = setInterval(async () => {
+      try {
+        if (sock && connectionState === 'connected') {
+          await sock.sendPresenceUpdate('composing', chatId);
+        }
+      } catch (err) {
+        console.error('[bridge] Typing interval error:', err.message);
+      }
+    }, 5000);
+
+    typingIntervals.set(chatId, interval);
     res.json({ success: true });
   } catch (err) {
-    res.json({ success: false });
+    res.json({ success: false, error: err.message });
   }
+});
+
+app.post('/typing/stop', (req, res) => {
+  const { chatId } = req.body;
+  if (!chatId) return res.status(400).json({ error: 'chatId required' });
+
+  const interval = typingIntervals.get(chatId);
+  if (interval) {
+    clearInterval(interval);
+    typingIntervals.delete(chatId);
+  }
+  res.json({ success: true });
 });
 
 // Chat info

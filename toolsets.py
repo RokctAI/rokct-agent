@@ -203,6 +203,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "rokct-coding": {
+        "description": "Rokct Coding Engine: Workspace mapping, file operations, and terminal access",
+        "tools": ["workspace_map"],
+        "includes": ["file", "terminal", "code_execution"]
+    },
+
 
     # Scenario-specific toolsets
     
@@ -369,10 +375,16 @@ TOOLSETS = {
         "includes": []
     },
 
+    "gateway": {
+        "description": "Gateway management tools: session digest and status",
+        "tools": ["session_digest"],
+        "includes": []
+    },
+
     "hermes-gateway": {
         "description": "Gateway toolset - union of all messaging platform tools",
         "tools": [],
-        "includes": ["hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant", "hermes-email", "hermes-sms", "hermes-mattermost", "hermes-matrix", "hermes-dingtalk", "hermes-feishu", "hermes-wecom", "hermes-webhook"]
+        "includes": ["gateway", "hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant", "hermes-email", "hermes-sms", "hermes-mattermost", "hermes-matrix", "hermes-dingtalk", "hermes-feishu", "hermes-wecom", "hermes-webhook"]
     }
 }
 

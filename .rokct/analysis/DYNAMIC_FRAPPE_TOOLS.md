@@ -1,8 +1,8 @@
-# Technical Guide: Dynamic Frappe Tools in Hermes Agent
+# Technical Guide: Dynamic Frappe Tools in Hermes Agent [DONE] (done)
 
 This guide explains how to use your `rcore` platform's "Bake" logic to dynamically inject Frappe capabilities into Hermes Agent as executable tools.
 
-## 1. The Dynamic Tool Architecture
+## 1. The Dynamic Tool Architecture [DONE]
 
 Your `manager.py` already generates `ai_tools.json` (OpenAI tool schemas). Hermes Agent can consume these schemas to register tools on the fly.
 
@@ -12,7 +12,7 @@ Your `manager.py` already generates `ai_tools.json` (OpenAI tool schemas). Herme
 3.  **LLM:** The agent sees all your Frappe methods (e.g., `erpnext:create_invoice`) as standard tools.
 4.  **Execution:** When the agent calls a tool, Hermes routes the request to your Frappe `api.tenant` gateway.
 
-## 2. Implementation: `tools/frappe_dynamic.py`
+## 2. Implementation: `tools/frappe_dynamic.py` [DONE]
 
 You can implement this in Hermes with a single Python file.
 
@@ -81,5 +81,6 @@ To make this work for your different users (Tenants), you need to pass the tenan
 ## 4. Why this is powerful
 
 -   **Zero Code Maintenance:** If you add a new feature to Frappe (e.g., `Paas: Reboot Server`), you just run `bake`. The Agent automatically "learns" the new tool without you writing a single line of Python/Go in the agent codebase.
--   **Security:** Your `rcore` platform handles the security manifest. If a command isn't in `api_manifest.json`, the Frappe gateway will reject it, even if the LLM tries to call it.
+-   **Security & Redaction:** Hermes v0.7.0 includes enhanced **Secret Exfiltration Blocking**. You can add patterns for Frappe `sid` and API secrets to the redaction engine to ensure they never leak.
+-   **Inline Diffs:** v0.7.0's **Inline Diff Previews** allow you to visually verify what the agent is "baking" or "patching" in your site config files before the action is finalized.
 -   **Consistency:** The same tools used by your Flutter/Next.js apps are now available to your AI agent.

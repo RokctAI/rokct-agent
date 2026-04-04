@@ -905,6 +905,7 @@ class BasePlatformAdapter(ABC):
 
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Hook called when background processing begins."""
+        await self.send_typing(event.source.chat_id)
 
     async def on_processing_complete(self, event: MessageEvent, success: bool) -> None:
         """Hook called when background processing completes."""
@@ -1205,12 +1206,45 @@ class BasePlatformAdapter(ABC):
                 # Send the text portion
                 if text_content:
                     logger.info("[%s] Sending response (%d chars) to %s", self.name, len(text_content), event.source.chat_id)
-                    result = await self._send_with_retry(
-                        chat_id=event.source.chat_id,
-                        content=text_content,
-                        reply_to=event.message_id,
-                        metadata=_thread_metadata,
-                    )
+                    
+                    # Check for oversized messages (>4000) and split if necessary
+                    if len(text_content) > 4000:
+                        chunks = self.truncate_message(text_content, max_length=4000)
+                        for i, chunk in enumerate(chunks):
+                            if i > 0: await asyncio.sleep(1.0) # Delay between parts
+                            await self._send_with_retry(
+                                chat_id=event.source.chat_id,
+                                content=chunk,
+                                reply_to=event.message_id if i == 0 else None,
+                                metadata=_thread_metadata,
+                            )
+                        _record_delivery(SendResult(success=True)) # Sim success for hook
+                        text_content = None # Skip normal send
+                    
+                    if not text_content:
+                        pass # Already sent chunks
+                    # Pseudo-streaming: check if platform supports editing an existing message
+                    stream_id = getattr(self, "_stream_message_ids", {}).get(event.source.chat_id)
+                    if stream_id:
+                        result = await self.edit_message(
+                            chat_id=event.source.chat_id,
+                            message_id=stream_id,
+                            content=text_content,
+                        )
+                        if not result.success:
+                            result = await self._send_with_retry(
+                                chat_id=event.source.chat_id,
+                                content=text_content,
+                                reply_to=event.message_id,
+                                metadata=_thread_metadata,
+                            )
+                    else:
+                        result = await self._send_with_retry(
+                            chat_id=event.source.chat_id,
+                            content=text_content,
+                            reply_to=event.message_id,
+                            metadata=_thread_metadata,
+                        )
                     _record_delivery(result)
 
                 # Human-like pacing delay between text and media
@@ -1446,9 +1480,10 @@ class BasePlatformAdapter(ABC):
         return content
     
     @staticmethod
-    def truncate_message(content: str, max_length: int = 4096) -> List[str]:
+    def truncate_message(content: str, max_length: int = 4000) -> List[str]:
         """
-        Split a long message into chunks, preserving code block boundaries.
+        Split a long message into chunks, preserving code block boundaries
+        and avoiding splits mid-sentence or mid-word.
 
         When a split falls inside a triple-backtick code block, the fence is
         closed at the end of the current chunk and reopened (with the original
@@ -1475,26 +1510,29 @@ class BasePlatformAdapter(ABC):
         carry_lang: Optional[str] = None
 
         while remaining:
-            # If we're continuing a code block from the previous chunk,
-            # prepend a new opening fence with the same language tag.
             prefix = f"```{carry_lang}\n" if carry_lang is not None else ""
-
-            # How much body text we can fit after accounting for the prefix,
-            # a potential closing fence, and the chunk indicator.
             headroom = max_length - INDICATOR_RESERVE - len(prefix) - len(FENCE_CLOSE)
-            if headroom < 1:
-                headroom = max_length // 2
+            if headroom < 1: headroom = max_length // 2
 
-            # Everything remaining fits in one final chunk
             if len(prefix) + len(remaining) <= max_length - INDICATOR_RESERVE:
                 chunks.append(prefix + remaining)
                 break
 
-            # Find a natural split point (prefer newlines, then spaces)
+            # Find a natural split point (prefer sentences, then newlines, then spaces)
             region = remaining[:headroom]
-            split_at = region.rfind("\n")
+            
+            # Sentence boundary detection
+            split_at = -1
+            for p in (". ", "! ", "? ", ".\n", "!\n", "?\n"):
+                pos = region.rfind(p)
+                if pos > split_at: split_at = pos + 1
+            
+            if split_at < headroom // 2:
+                split_at = region.rfind("\n")
+            
             if split_at < headroom // 2:
                 split_at = region.rfind(" ")
+
             if split_at < 1:
                 split_at = headroom
 

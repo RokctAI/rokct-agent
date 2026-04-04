@@ -1,4 +1,4 @@
-# Integration Architecture: Frappe Core & Hermes Agent
+# Integration Architecture: Frappe Core & Hermes Agent (done)
 
 This document outlines the high-level architecture for integrating your `rcore` platform with Hermes Agent to build a dynamic, self-improving AI service.
 
@@ -36,12 +36,12 @@ graph TD
 ### A. The "Bake" Bridge
 Your current `manager.bake_assets()` is the critical link. It ensures that the Agent's understanding of its capabilities (Tools) is always perfectly synced with your latest backend code.
 
-### B. Multi-Tenant Routing (Pluggable Memory)
-With Hermes v2026.4.3, you can implement a native **`FrappeMemoryProvider`**.
+### B. Multi-Tenant Routing & Credential Pools
+With Hermes v0.7.0, you can leverage native multi-tenancy features:
 
--   **Memory Isolation:** Instead of using flat files, the agent stores memories directly in your Frappe PostgreSQL database using **pgvector**.
+-   **`FrappeMemoryProvider` (Pluggable Memory):** Instead of using flat files, the agent stores memories directly in your Frappe PostgreSQL database using **pgvector**. v0.7.0 limits to **one external provider**, so this provider becomes the authoritative memory source for your stack.
 -   **Tenant Scoping:** Every memory search query is filtered by `tenant_id`, ensuring a user in Tenant A never "remembers" a fact from Tenant B.
--   **Unified Database:** Your Agent and your ERP/Business logic now share the same "Source of Truth" in PostgreSQL.
+-   **Credential Pools:** Use v0.7.0's **Same-Provider Credential Pools** to manage multiple API keys for different tenants within a single Hermes instance, allowing for lightweight scale.
 
 ### C. The Self-Improving Loop (Legacy & Career)
 This is where Hermes shines for your "Life Manager" goal:
@@ -62,9 +62,10 @@ For your "offering different services" requirement:
 
 By simply toggling which "Toolsets" or "Skills" are loaded into the Hermes session based on the user's subscription, you can offer vastly different experiences using the same underlying engine.
 
-## 4. Porting Roadmap
+## 4. Porting Roadmap (v0.7.0 Native)
 
-1.  **Phase 1:** Copy your TypeScript WhatsApp bridge logic into the Hermes bridge or use the native Hermes one.
-2.  **Phase 2:** Implement the `FrappeDynamicToolset` in Python (as shown in `DYNAMIC_FRAPPE_TOOLS.md`).
-3.  **Phase 3:** Port your `site_config.go` logic to Python so Hermes can auto-discover your local Frappe sites.
-4.  **Phase 4:** Start creating "Skills" for the Career and Legacy modules.
+1.  **Phase 1: Gateway & Resilience:** Deploy the Hermes v0.7.0 Gateway. Evaluate the native WhatsApp bridge against your TypeScript bridge. v0.7.0's hardened media delivery and approval routing make the native bridge a strong candidate. [DONE]
+2.  **Phase 2: Dynamic Tooling & Diffs:** Implement the `FrappeDynamicToolset` (see `DYNAMIC_FRAPPE_TOOLS.md`). Use v0.7.0's **Inline Diff Previews** to ensure the agent's "baked" changes are visible and safe.
+3.  **Phase 3: Multi-Tenant Memory:** Implement the **`FrappeMemoryProvider`** plugin using `pgvector`. This replaces the need for Honcho and centralizes memory in your `rPanel` database.
+4.  **Phase 4: Scalable Auth:** Configure **Credential Pools** for your tenants' inference keys, allowing you to serve multiple users from a single resilient gateway.
+5.  **Phase 5: Life Manager Skills:** Port your architectural mapping and "Monday Planning" logic as Hermes **Skills**, utilizing **Camofox** for any required web research.

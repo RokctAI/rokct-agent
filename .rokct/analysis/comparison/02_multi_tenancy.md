@@ -1,11 +1,11 @@
-# Comparison Point 2: Multi-Tenancy & Data Isolation
+# Comparison Point 2: Multi-Tenancy & Data Isolation (done)
 
-| Feature | GoClaw (Fork) | Hermes Agent |
+| Feature | GoClaw (Fork) | Hermes Agent (v0.7.0) |
 | :--- | :--- | :--- |
-| **Primary Store** | **PostgreSQL (Multi-tenant)** | **SQLite (Per Profile)** |
-| **User Isolation** | `tenant_id` at DB level | `session_key` at SQLite level |
-| **API Key Storage** | Encrypted in DB (AES-256) | File-based `.env` or `auth.json` |
-| **Concurrency** | Lane-based scheduling | Concurrent Python threads |
+| **Primary Store** | **PostgreSQL (Multi-tenant)** | **SQLite (Profiles) or PostgreSQL (Plugin)** |
+| **User Isolation** | `tenant_id` at DB level | **Profiles** or **Dynamically Scoped Plugin** |
+| **API Key Storage** | Encrypted in DB (AES-256) | **Credential Pools** (auth.json) |
+| **Concurrency** | Lane-based scheduling | **Sequential Tool Routing** (v0.7.0) |
 
 ### Discussion
 
@@ -34,11 +34,16 @@ This addresses your request for `~/.hermes/profiles/{$tenant}/memories/`.
 | **Tenants** | Native Profiles (`--profile`) | Absolute data/context separation. |
 
 #### Scale Recommendation (v2026.4.3 Update)
-With the latest **Pluggable Memory Provider Interface** in Hermes Agent:
-- You can now implement a **`FrappeMemoryProvider`** as a native plugin.
-- This allows Hermes to use **pgvector** in your Frappe PostgreSQL database for memory, providing the same high-scale isolation as GoClaw.
-- **Isolation:** You can scope vector searches using a `tenant_id` column, ensuring perfect data separation even within a single Hermes process.
+With the latest **Pluggable Memory Provider Interface** and **Credential Pools** in Hermes Agent v0.7.0:
 
-For your Life Manager service:
-- Start with **Native Profiles** for easy setup.
-- Transition to a **Custom pgvector Provider** when you need to scale to thousands of tenants while keeping the superior Hermes learning loop.
+1.  **Unified Credential Management:**
+    - Use **Same-Provider Credential Pools** to manage API keys for hundreds of tenants in a single Hermes instance. 
+    - No need to spin up separate Docker containers for every tenant's keys.
+
+2.  **`FrappeMemoryProvider` (pgvector):**
+    - Implement a native memory plugin that connects directly to your rPanel PostgreSQL database.
+    - **Isolation:** Scope searches by `tenant_id` at the SQL level, leveraging your existing `pgvector` investment.
+
+3.  **Deployment Strategy:**
+    - **Small Scale:** Use Hermes **Profiles** (`--profile {tenant}`) for absolute file-system isolation.
+    - **Enterprise Scale:** Use a single Hermes Gateway with **Credential Pools** and the **`FrappeMemoryProvider`** to handle thousands of tenants dynamically via the session `user_id`.

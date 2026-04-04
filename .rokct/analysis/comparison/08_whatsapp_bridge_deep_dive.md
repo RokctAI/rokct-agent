@@ -1,4 +1,4 @@
-# Comparison Point 8: WhatsApp Bridge Deep Dive
+# Comparison Point 8: WhatsApp Bridge Deep Dive (done)
 
 This document provides a detailed technical comparison of how WhatsApp is integrated into both frameworks.
 
@@ -23,6 +23,10 @@ Hermes has a sophisticated media pipeline. If you send a `.pdf` or `.csv` via Wh
 2.  The Python adapter detects the text-readable format.
 3.  **Automatically injects the file content** directly into the agent's message context (up to 100KB).
 This allows the agent to "read" documents you send on WhatsApp instantly.
+
+**v0.7.0 Resilience Update:**
+- **Media Delivery Hardening:** v0.7.0 fixes race conditions in photo media delivery and flood control, making the WhatsApp experience substantially more reliable in production.
+- **Approval Flow:** Tool results are no longer lost when the agent is blocked waiting for WhatsApp approval, thanks to the new running-agent guard.
 
 #### 3. Automatic Deployment
 One of Hermes's most "Next Level" features is its `connect()` logic. If the `node_modules` for the WhatsApp bridge are missing, Hermes **automatically runs `npm install`** for you. This makes it much easier to distribute your "Life Manager" service to others, as the environment self-heals.

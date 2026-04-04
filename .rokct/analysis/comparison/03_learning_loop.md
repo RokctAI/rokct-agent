@@ -1,4 +1,4 @@
-# Comparison Point 3: Learning Loop & Memory
+# Comparison Point 3: Learning Loop & Memory (done)
 
 | Feature | GoClaw (Fork) | Hermes Agent |
 | :--- | :--- | :--- |
@@ -20,10 +20,11 @@ GoClaw is superior at **Semantic Retrieval**. Its use of `pgvector` allows the a
 #### v2026.4.3 Update: Pluggable Memory
 The latest Hermes release introduces a **Pluggable Memory Provider Interface**. This means you no longer have to choose between GoClaw's "Better Search" and Hermes's "Growth."
 
-You can now:
-1.  Use the **Honcho** plugin for deep user modeling.
-2.  Use a **Vector Store** plugin (like `mem0` or a custom `pgvector` provider) for high-accuracy semantic search.
-3.  Register **both** at the same time to get the ultimate Life Manager foundation.
+**The Frappe Power-Up:**
+Instead of using Honcho (external modeling), you can implement a **`FrappeMemoryProvider`**. This allows you to:
+1.  **Direct pgvector Integration:** Use your existing Frappe PostgreSQL tables for semantic recall.
+2.  **Context Injection:** Automatically inject Frappe "Achievements" or "Legacy" data into the agent's turn context via the `prefetch()` hook.
+3.  **One External Limit:** Note that v0.7.0 limits the agent to **ONE external memory provider**. By building a native Frappe provider, you maximize this slot with your own business logic.
 
 #### Recommendation
-For a Life Manager, **Hermes Agent (v2026.4.3+)** is now the undisputed winner. It combines autonomous growth with the ability to plug into production-grade vector databases.
+For a Life Manager, **Hermes Agent (v2026.4.3+)** is the undisputed winner. It combines autonomous growth with the ability to plug directly into your `rPanel` PostgreSQL backend.

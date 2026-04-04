@@ -750,7 +750,38 @@ class WhatsAppAdapter(BasePlatformAdapter):
             )
         except Exception:
             pass  # Ignore typing indicator failures
+
+    async def stop_typing(self, chat_id: str) -> None:
+        """Stop persistent typing indicator via bridge."""
+        if not self._running or not self._http_session:
+            return
+        try:
+            import aiohttp
+            await self._http_session.post(
+                f"http://127.0.0.1:{self._bridge_port}/typing/stop",
+                json={"chatId": chat_id},
+                timeout=aiohttp.ClientTimeout(total=5)
+            )
+        except Exception:
+            pass
     
+    async def on_processing_start(self, event: MessageEvent) -> None:
+        """Hook called when background processing begins."""
+        await self.send_typing(event.source.chat_id)
+        # Store the ID of the initial status message for pseudo-streaming
+        result = await self.send(event.source.chat_id, "⚕ *Rok* is working on it...")
+        if result.success:
+            if not hasattr(self, "_stream_message_ids"):
+                self._stream_message_ids = {}
+            self._stream_message_ids[event.source.chat_id] = result.message_id
+
+    async def on_processing_complete(self, event: MessageEvent, success: bool) -> None:
+        """Hook called when background processing completes."""
+        await self.stop_typing(event.source.chat_id)
+        # Final edit handled by _process_message_background but cleanup here
+        if hasattr(self, "_stream_message_ids"):
+            self._stream_message_ids.pop(event.source.chat_id, None)
+
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         """Get information about a WhatsApp chat."""
         if not self._running or not self._http_session:

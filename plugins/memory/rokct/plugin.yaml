@@ -1,0 +1,4 @@
+name: rokct
+description: Briding agent memory with the Frappe brain app and pgvector.
+version: 1.0.0
+author: frappenized

@@ -132,7 +132,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 # =========================================================================
 
 DEFAULT_AGENT_IDENTITY = (
-    "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+    "You are Rok, an intelligent AI assistant created by Nous Research. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
     "analyzing information, creative work, and executing actions via your tools. "
@@ -878,6 +878,18 @@ def _load_cursorrules(cwd_path: Path) -> str:
     return _truncate_content(cursorrules_content, ".cursorrules")
 
 
+def build_rokct_protocol_prompt(cwd: Optional[str] = None) -> str:
+    """Load the ROKCT workspace protocol if available."""
+    try:
+        from agent.rokct_protocol import RokctProtocol
+        loader = RokctProtocol(workspace_path=cwd or os.getcwd())
+        if loader.load():
+            return loader.format_for_prompt()
+    except Exception as e:
+        logger.debug("Failed to load ROKCT protocol: %s", e)
+    return ""
+
+
 def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = False) -> str:
     """Discover and load context files for the system prompt.
 
@@ -898,6 +910,11 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
 
     cwd_path = Path(cwd).resolve()
     sections = []
+
+    # ROKCT Protocol (Injected before project context if healthy)
+    rokct_protocol = build_rokct_protocol_prompt(cwd)
+    if rokct_protocol:
+        sections.append(rokct_protocol)
 
     # Priority-based project context: first match wins
     project_context = (

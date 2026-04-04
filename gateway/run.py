@@ -1235,6 +1235,9 @@ class GatewayRunner:
         # Start background session expiry watcher for proactive memory flushing
         asyncio.create_task(self._session_expiry_watcher())
 
+        # Start background Frappe offline queue watcher
+        asyncio.create_task(self._frappe_queue_watcher())
+
         # Start background reconnection watcher for platforms that failed at startup
         if self._failed_platforms:
             logger.info(
@@ -1248,58 +1251,92 @@ class GatewayRunner:
         
         return True
     
-    async def _session_expiry_watcher(self, interval: int = 300):
-        """Background task that proactively flushes memories for expired sessions.
-        
-        Runs every `interval` seconds (default 5 min).  For each session that
-        has expired according to its reset policy, flushes memories in a thread
-        pool and marks the session so it won't be flushed again.
-
-        This means memories are already saved by the time the user sends their
-        next message, so there's no blocking delay.
+    async def _session_expiry_watcher(self, interval: int = 60):
+        """Background task that proactively flushes memories for expired sessions
+        and sends pre-reset warnings to users.
         """
-        await asyncio.sleep(60)  # initial delay — let the gateway fully start
+        await asyncio.sleep(30)
         while self._running:
             try:
                 self.session_store._ensure_loaded()
+                now = datetime.now()
                 for key, entry in list(self.session_store._entries.items()):
                     if entry.memory_flushed:
-                        continue  # already flushed this session (persisted to disk)
-                    if not self.session_store._is_session_expired(entry):
-                        continue  # session still active
-                    # Session has expired — flush memories in the background
-                    logger.info(
-                        "Session %s expired (key=%s), flushing memories proactively",
-                        entry.session_id, key,
-                    )
-                    try:
-                        await self._async_flush_memories(entry.session_id, key)
-                        # Shut down memory provider on the cached agent
-                        cached_agent = self._running_agents.get(key)
-                        if cached_agent and cached_agent is not _AGENT_PENDING_SENTINEL:
-                            try:
-                                if hasattr(cached_agent, 'shutdown_memory_provider'):
-                                    cached_agent.shutdown_memory_provider()
-                            except Exception:
-                                pass
-                        # Mark as flushed and persist to disk so the flag
-                        # survives gateway restarts.
-                        with self.session_store._lock:
-                            entry.memory_flushed = True
-                            self.session_store._save()
-                        logger.info(
-                            "Pre-reset memory flush completed for session %s",
-                            entry.session_id,
-                        )
-                    except Exception as e:
-                        logger.debug("Proactive memory flush failed for %s: %s", entry.session_id, e)
+                        continue
+
+                    policy = self.config.get_reset_policy(entry.platform, entry.chat_type)
+                    if policy.mode == "none":
+                        continue
+
+                    # Pre-reset warning (10 minutes before expiry)
+                    is_expired = self.session_store._is_session_expired(entry)
+                    
+                    if not is_expired and policy.mode in ("idle", "both"):
+                        idle_deadline = entry.updated_at + timedelta(minutes=policy.idle_minutes)
+                        warning_threshold = idle_deadline - timedelta(minutes=10)
+                        
+                        if now >= warning_threshold and not entry.last_warning_at:
+                            adapter = self.adapters.get(entry.platform)
+                            if adapter and entry.origin:
+                                mins_left = int((idle_deadline - now).total_seconds() / 60)
+                                if mins_left > 0:
+                                    msg = f"⏳ **Heads up:** Your session will expire in {mins_left} minutes due to inactivity. Type `/keep` to stay active!"
+                                    asyncio.create_task(adapter.send(entry.origin.chat_id, msg))
+                                    with self.session_store._lock:
+                                        entry.last_warning_at = now
+                                        self.session_store._save()
+
+                    if is_expired:
+                        logger.info("Session %s expired, flushing memories proactively", entry.session_id)
+                        try:
+                            await self._async_flush_memories(entry.session_id, key)
+                            with self.session_store._lock:
+                                entry.memory_flushed = True
+                                self.session_store._save()
+                        except Exception as e:
+                            logger.debug("Proactive flush failed: %s", e)
+
             except Exception as e:
                 logger.debug("Session expiry watcher error: %s", e)
-            # Sleep in small increments so we can stop quickly
+            
             for _ in range(interval):
-                if not self._running:
-                    break
+                if not self._running: break
                 await asyncio.sleep(1)
+
+    async def _frappe_queue_watcher(self, interval: int = 300):
+        """Background task that retries failed Frappe calls from the offline queue."""
+        from gateway.frappe_integration import OFFLINE_QUEUE_PATH, call_frappe_api
+        
+        while self._running:
+            if OFFLINE_QUEUE_PATH.exists():
+                try:
+                    queue = json.loads(OFFLINE_QUEUE_PATH.read_text())
+                    if queue:
+                        logger.info("Retrying %d queued Frappe calls...", len(queue))
+                        remaining = []
+                        for item in queue:
+                            result = await call_frappe_api(item["cmd"], item["payload"])
+                            if result.get("success"):
+                                # Notify user on success
+                                adapter = None
+                                for plat, a in self.adapters.items():
+                                    # Find adapter by name/id - simplified here
+                                    adapter = a
+                                    break
+                                if adapter:
+                                    msg = f"⚕ Synced locally saved '{item['cmd']}' to Frappe."
+                                    await adapter.send(item["chat_id"], msg)
+                            else:
+                                remaining.append(item)
+                        
+                        if remaining:
+                            OFFLINE_QUEUE_PATH.write_text(json.dumps(remaining, indent=2))
+                        else:
+                            OFFLINE_QUEUE_PATH.unlink()
+                except Exception as e:
+                    logger.debug("Frappe queue watcher error: %s", e)
+            
+            await asyncio.sleep(interval)
 
     async def _platform_reconnect_watcher(self) -> None:
         """Background task that periodically retries connecting failed platforms.
@@ -1692,12 +1729,13 @@ class GatewayRunner:
         
         This is the core message processing pipeline:
         1. Check user authorization
-        2. Check for commands (/new, /reset, etc.)
-        3. Check for running agent and interrupt if needed
-        4. Get or create session
-        5. Build context for agent
-        6. Run agent conversation
-        7. Return response
+        2. Wake phrase / Ambient capture filtering
+        3. Check for commands (/new, /reset, etc.)
+        4. Check for running agent and interrupt if needed
+        5. Get or create session
+        6. Build context for agent
+        7. Run agent conversation
+        8. Return response
         """
         source = event.source
 
@@ -1736,7 +1774,66 @@ class GatewayRunner:
                     # Record rate limit so subsequent messages are silently ignored
                     self.pairing_store._record_rate_limit(platform_name, source.user_id)
             return None
-        
+
+        # --- Wake Phrase & Ambient Capture ---
+        _quick_key = self._session_key_for_source(source)
+        if not event.is_command():
+            text = event.text.lower().strip()
+            
+            # Check for generic confirmations (Yes/No)
+            if text in ("yes", "no", "skip", "ignore"):
+                pending = self._pending_approvals.get(_quick_key)
+                if pending:
+                    if pending.get("type") == "ambient_capture":
+                        from gateway.ambient import process_confirmed_capture
+                        resp = await process_confirmed_capture(self, _quick_key, text)
+                        
+                        # Invoice PDF Delivery
+                        if text == "yes" and pending.get("intent") == "invoice":
+                            # If it was an invoice confirmation, fetch and send PDF
+                            try:
+                                from gateway.frappe_integration import call_frappe_api
+                                # Assuming 'content' or metadata has invoice ID
+                                inv_id = re.search(r'#([A-Z0-9\-]+)', pending.get("content", ""))
+                                if inv_id:
+                                    pdf_result = await call_frappe_api("erpnext:get_invoice_pdf", {"invoice": inv_id.group(1)})
+                                    if pdf_result.get("success") and pdf_result.get("file_path"):
+                                        adapter = self.adapters.get(source.platform)
+                                        await adapter.send_document(source.chat_id, pdf_result["file_path"], caption=f"Here is your PDF for invoice {inv_id.group(1)}")
+                            except Exception:
+                                pass
+                        
+                        if resp: return resp
+                    elif pending.get("type") == "voice_confirm":
+                        if text == "yes":
+                            # Proceed with the original transcript
+                            transcript = pending["transcript"]
+                            orig_event = pending["event"]
+                            self._pending_approvals.pop(_quick_key, None)
+                            # Re-handle the message with the transcript as text
+                            orig_event.text = transcript
+                            orig_event.message_type = MessageType.TEXT
+                            return await self._handle_message(orig_event)
+                        else:
+                            self._pending_approvals.pop(_quick_key, None)
+                            return "Okay, I've discarded that voice note. Please correction me or try again!"
+
+        if self.config.wake_phrase and not event.is_command():
+            wp = self.config.wake_phrase.lower().strip()
+            text = event.text.lower().strip()
+
+            if not text.startswith(wp):
+                # Trigger ambient capture logic
+                from gateway.ambient import handle_ambient_capture
+                return await handle_ambient_capture(self, event)
+            else:
+                # Strip wake phrase for processing
+                # Case-insensitive stripping of the wake phrase from the original text
+                pattern = re.compile(re.escape(wp), re.IGNORECASE)
+                event.text = pattern.sub("", event.text, count=1).strip()
+                if not event.text:
+                    return f"Yes? I'm listening. (Wake phrase '{wp}' detected)"
+
         # PRIORITY handling when an agent is already running for this session.
         # Default behavior is to interrupt immediately so user text/stop messages
         # are handled with minimal latency.
@@ -2005,6 +2102,9 @@ class GatewayRunner:
         if canonical == "voice":
             return await self._handle_voice_command(event)
 
+        if canonical == "keep":
+            return await self._handle_keep_command(event)
+
         # User-defined quick commands (bypass agent loop, no LLM call)
         if command:
             if isinstance(self.config, dict):
@@ -2148,6 +2248,17 @@ class GatewayRunner:
         
         # Set environment variables for tools
         self._set_session_env(context)
+
+        # Build custom reply prefix if agent_name is customized
+        try:
+            from hermes_cli.config import load_config as _lc
+            _cfg = _lc()
+            _custom_name = _cfg.get("display", {}).get("agent_name", "Rok")
+            if _custom_name != "Rok":
+                # Only override if it's NOT the default we just set
+                os.environ["WHATSAPP_REPLY_PREFIX"] = f"⚕ *{_custom_name}*\n────────────\n"
+        except Exception:
+            pass
         
         # Read privacy.redact_pii from config (re-read per message)
         _redact_pii = False
@@ -2572,6 +2683,42 @@ class GatewayRunner:
                 message_text = await self._enrich_message_with_transcription(
                     message_text, audio_paths
                 )
+                # Confirmation Loop for Voice Notes
+                if message_text and "[The user sent a voice message" in message_text:
+                    # Extract the transcript from the enrichment note
+                    match = re.search(r'Here\'s what they said: "(.*?)"', message_text)
+                    if match:
+                        transcript = match.group(1)
+                        # Split transcript into lines for card rows
+                        words = transcript.split()
+                        rows = []
+                        current_row = ""
+                        for word in words:
+                            if len(current_row + word) > 30:
+                                rows.append(current_row.strip())
+                                current_row = word + " "
+                            else:
+                                current_row += word + " "
+                        if current_row: rows.append(current_row.strip())
+
+                        confirm_card = {
+                            "title": "🎤 I heard...",
+                            "rows": rows,
+                            "footer": "Reply YES to confirm or correct me"
+                        }
+                        
+                        adapter = self.adapters.get(source.platform)
+                        if adapter and source.platform == Platform.WHATSAPP:
+                            await adapter.send(source.chat_id, message="", card=confirm_card)
+                            
+                            # Block and wait for confirmation (simplified)
+                            # In a real setup, we'd use a state machine, but for this task:
+                            self._pending_approvals[_quick_key] = {
+                                "type": "voice_confirm",
+                                "transcript": transcript,
+                                "event": event
+                            }
+                            return None
                 # If STT failed, send a direct message to the user so they
                 # know voice isn't configured — don't rely on the agent to
                 # relay the error clearly.
@@ -3468,6 +3615,22 @@ class GatewayRunner:
         if hasattr(raw, "guild") and raw.guild:
             return raw.guild.id
         return None
+
+    async def _handle_keep_command(self, event: MessageEvent) -> str:
+        """Handle /keep command — extend the current session's life."""
+        source = event.source
+        session_key = self._session_key_for_source(source)
+        
+        with self.session_store._lock:
+            self.session_store._ensure_loaded_locked()
+            if session_key in self.session_store._entries:
+                entry = self.session_store._entries[session_key]
+                entry.updated_at = datetime.now()
+                entry.last_warning_at = None # Clear warning status
+                self.session_store._save()
+                return "✅ Session extended. I'll stay active for you!"
+            
+        return "No active session found to extend."
 
     async def _handle_voice_command(self, event: MessageEvent) -> str:
         """Handle /voice [on|off|tts|channel|leave|status] command."""
@@ -5542,6 +5705,23 @@ class GatewayRunner:
                 msg = f"{emoji} {tool_name}: \"{preview}\""
             else:
                 msg = f"{emoji} {tool_name}..."
+
+            # For WhatsApp pseudo-streaming, trigger an immediate edit
+            if source.platform == Platform.WHATSAPP:
+                try:
+                    adapter = self.adapters.get(source.platform)
+                    if adapter:
+                        _stream_msg = f"⚕ *Rok* {tool_name.replace('_', ' ')}..."
+                        asyncio.run_coroutine_threadsafe(
+                            adapter.edit_message(
+                                chat_id=source.chat_id,
+                                message_id=getattr(adapter, "_stream_message_ids", {}).get(source.chat_id),
+                                content=_stream_msg
+                            ),
+                            asyncio.get_event_loop()
+                        )
+                except Exception:
+                    pass
             
             # Dedup: collapse consecutive identical progress messages.
             # Common with execute_code where models iterate with the same
@@ -6405,6 +6585,7 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, interval: int
 
     IMAGE_CACHE_EVERY = 60   # ticks — once per hour at default 60s interval
     CHANNEL_DIR_EVERY = 5    # ticks — every 5 minutes
+    DIGEST_EVERY = 1440      # ticks — once per 24 hours
 
     logger.info("Cron ticker started (interval=%ds)", interval)
     tick_count = 0
@@ -6422,6 +6603,31 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, interval: int
                 build_channel_directory(adapters)
             except Exception as e:
                 logger.debug("Channel directory refresh error: %s", e)
+
+        if tick_count % DIGEST_EVERY == 0 and adapters:
+            try:
+                from tools.session_digest_tool import generate_session_digest
+                # Deliver to first available home channel
+                for plat, adapter in adapters.items():
+                    home = adapter.config.home_channel
+                    if home:
+                        # Use card format for WhatsApp, text for others
+                        fmt = "card" if plat == Platform.WHATSAPP else "text"
+                        digest = generate_session_digest(format=fmt)
+                        
+                        send_kwargs = {"chat_id": home.chat_id}
+                        if fmt == "card":
+                            send_kwargs["card"] = digest
+                        else:
+                            send_kwargs["content"] = digest
+                            
+                        asyncio.run_coroutine_threadsafe(
+                            adapter.send(**send_kwargs),
+                            asyncio.get_event_loop()
+                        )
+                        break
+            except Exception as e:
+                logger.debug("Session digest generation error: %s", e)
 
         if tick_count % IMAGE_CACHE_EVERY == 0:
             try:
