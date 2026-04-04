@@ -1,0 +1,67 @@
+# Integration Architecture: Frappe Core & Hermes Agent
+
+This document outlines the high-level architecture for integrating your `rcore` platform with Hermes Agent to build a dynamic, self-improving AI service.
+
+## 1. System Overview
+
+The integration uses Frappe as the **Business Logic & Identity** layer and Hermes as the **Intelligence & Interaction** layer.
+
+```mermaid
+graph TD
+    subgraph "Frappe (Paas/CRM/Core)"
+        B[Bake Command] --> MS[api_manifest.json]
+        B --> TS[ai_tools.json]
+        GT[api.tenant Gateway]
+        GC[api.control Gateway]
+    end
+
+    subgraph "Hermes Agent"
+        DR[Dynamic Registry] -- loads --> TS
+        Loop[Agent Loop] -- uses --> DR
+        Mem[Memory/Skills]
+    end
+
+    subgraph "Frontend"
+        WA[WhatsApp] <--> Bridge[Node.js Bridge]
+        Bridge <--> Loop
+    end
+
+    Loop -- "Execute Tool" --> GT
+    Loop -- "Update State" --> Mem
+```
+
+## 2. Key Components
+
+### A. The "Bake" Bridge
+Your current `manager.bake_assets()` is the critical link. It ensures that the Agent's understanding of its capabilities (Tools) is always perfectly synced with your latest backend code.
+
+### B. Multi-Tenant Routing
+-   **Hermes** handles the conversation isolation (sessions).
+-   **Frappe** handles the data isolation (tenants).
+-   **The Link:** When an Agent needs to call a tool, it passes the `tenant_id` or `user_id`. The Hermes `execute_frappe_tool` handler converts this into the appropriate Frappe credentials.
+
+### C. The Self-Improving Loop (Legacy & Career)
+This is where Hermes shines for your "Life Manager" goal:
+1.  **Achievement Unlocked:** A user tells the Agent (via WhatsApp): "I just finished the marathon in 4 hours."
+2.  **Tool Execution:** The Agent calls `crm:log_achievement(title="Marathon", time="4h")`.
+3.  **Memory Update:** The Agent also updates its internal `USER.md` memory: "User is a runner, marathon PB is 4h."
+4.  **Skill Creation:** If the Agent needs to write a CV later, it sees this achievement in memory. It can even autonomously create a "CV Writing Skill" that specifically knows how to format these Frappe-logged achievements.
+
+## 3. Deployment Strategy
+
+For your "offering different services" requirement:
+
+| Service Level | Hermes Configuration | Frappe Role |
+| :--- | :--- | :--- |
+| **Personal (Life Mgr)** | Full Tool Access, Deep Memory | Tenant |
+| **Business (Invoice Mgr)** | Restricted to `paas:` tools | Tenant |
+| **Admin (Platform Mgr)** | `control:` tools enabled | Control |
+
+By simply toggling which "Toolsets" or "Skills" are loaded into the Hermes session based on the user's subscription, you can offer vastly different experiences using the same underlying engine.
+
+## 4. Porting Roadmap
+
+1.  **Phase 1:** Copy your TypeScript WhatsApp bridge logic into the Hermes bridge or use the native Hermes one.
+2.  **Phase 2:** Implement the `FrappeDynamicToolset` in Python (as shown in `DYNAMIC_FRAPPE_TOOLS.md`).
+3.  **Phase 3:** Port your `site_config.go` logic to Python so Hermes can auto-discover your local Frappe sites.
+4.  **Phase 4:** Start creating "Skills" for the Career and Legacy modules.
