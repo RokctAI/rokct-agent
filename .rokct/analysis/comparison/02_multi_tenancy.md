@@ -33,7 +33,12 @@ This addresses your request for `~/.hermes/profiles/{$tenant}/memories/`.
 | **Teammates** | Session-key (Single Profile) | Shared company context, private history. |
 | **Tenants** | Native Profiles (`--profile`) | Absolute data/context separation. |
 
-#### Scale Recommendation
+#### Scale Recommendation (v2026.4.3 Update)
+With the latest **Pluggable Memory Provider Interface** in Hermes Agent:
+- You can now implement a **`FrappeMemoryProvider`** as a native plugin.
+- This allows Hermes to use **pgvector** in your Frappe PostgreSQL database for memory, providing the same high-scale isolation as GoClaw.
+- **Isolation:** You can scope vector searches using a `tenant_id` column, ensuring perfect data separation even within a single Hermes process.
+
 For your Life Manager service:
-- Start with **Native Profiles**. It is the most secure and gives you the isolated file paths you wanted immediately.
-- For massive scale, you could eventually write a **Custom Postgres Memory Provider** that routes `MEMORY.md` updates to your Frappe PostgreSQL database using a `tenant_id` column.
+- Start with **Native Profiles** for easy setup.
+- Transition to a **Custom pgvector Provider** when you need to scale to thousands of tenants while keeping the superior Hermes learning loop.
