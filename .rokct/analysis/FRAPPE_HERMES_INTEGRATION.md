@@ -15,9 +15,10 @@ graph TD
         GC[api.control Gateway]
     end
 
-    subgraph "Hermes Agent"
+    subgraph "Hermes Agent (v2026.4.3+)"
         DR[Dynamic Registry] -- loads --> TS
         Loop[Agent Loop] -- uses --> DR
+        PMP[FrappeMemoryProvider] -- pgvector --> GT
         Mem[Memory/Skills]
     end
 
@@ -35,10 +36,12 @@ graph TD
 ### A. The "Bake" Bridge
 Your current `manager.bake_assets()` is the critical link. It ensures that the Agent's understanding of its capabilities (Tools) is always perfectly synced with your latest backend code.
 
-### B. Multi-Tenant Routing
--   **Hermes** handles the conversation isolation (sessions).
--   **Frappe** handles the data isolation (tenants).
--   **The Link:** When an Agent needs to call a tool, it passes the `tenant_id` or `user_id`. The Hermes `execute_frappe_tool` handler converts this into the appropriate Frappe credentials.
+### B. Multi-Tenant Routing (Pluggable Memory)
+With Hermes v2026.4.3, you can implement a native **`FrappeMemoryProvider`**.
+
+-   **Memory Isolation:** Instead of using flat files, the agent stores memories directly in your Frappe PostgreSQL database using **pgvector**.
+-   **Tenant Scoping:** Every memory search query is filtered by `tenant_id`, ensuring a user in Tenant A never "remembers" a fact from Tenant B.
+-   **Unified Database:** Your Agent and your ERP/Business logic now share the same "Source of Truth" in PostgreSQL.
 
 ### C. The Self-Improving Loop (Legacy & Career)
 This is where Hermes shines for your "Life Manager" goal:
